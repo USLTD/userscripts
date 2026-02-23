@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BTU Classroom Table Exporter
 // @namespace    https://timetable.usltd.ge/
-// @version      1.3
+// @version      1.4
 // @description  Export course groups from BTU Classroom to JSON, HTML Table, CSV, and Markdown. Supports partial export and language selection.
 // @author       Luka Mamukashvili <mamukashvili.luka@usltd.ge>
 // @match        https://classroom.btu.edu.ge/en/student/me/course/groups/*
@@ -214,11 +214,22 @@
             const mainRow = titleEl.closest('tr');
             const groupName = titleEl.textContent.trim();
 
-            // Extract Instructor (Text node after the user icon)
+            // Extract Instructor (Can be a text node or an <a> tag after the user icon)
             let instructor = "";
             const userIcon = mainRow.querySelector('.glyphicon-user');
-            if (userIcon && userIcon.nextSibling) {
-                instructor = userIcon.nextSibling.textContent.trim();
+            if (userIcon) {
+                const textNodeContent = userIcon.nextSibling ? userIcon.nextSibling.textContent.trim() : "";
+                if (textNodeContent) {
+                    // Fallback for older table formats where it's a plain text node
+                    instructor = textNodeContent;
+                } else {
+                    // For newer tables, the text node is empty whitespace, so we grab the next element
+                    const nextEl = userIcon.nextElementSibling;
+                    // Check if it's an <a> tag and verify it's not the message icon button
+                    if (nextEl && nextEl.tagName === 'A' && !nextEl.querySelector('.glyphicon')) {
+                        instructor = nextEl.textContent.trim();
+                    }
+                }
             }
 
             // Extract Schedule from the nested hidden row
