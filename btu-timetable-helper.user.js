@@ -1,18 +1,38 @@
 // ==UserScript==
 // @name         BTU Classroom Table Exporter
 // @namespace    https://timetable.usltd.ge/
-// @version      1.2
-// @description  Export course groups from BTU Classroom to JSON, HTML Table, CSV, and Markdown. Supports partial export.
+// @version      1.3
+// @description  Export course groups from BTU Classroom to JSON, HTML Table, CSV, and Markdown. Supports partial export and language selection.
 // @author       Luka Mamukashvili <mamukashvili.luka@usltd.ge>
 // @match        https://classroom.btu.edu.ge/en/student/me/course/groups/*
+// @match        https://classroom.btu.edu.ge/ge/student/me/course/groups/*
+// @match        https://classroom.btu.edu.ge/en/student/me/course/groups/*/*
 // @match        https://classroom.btu.edu.ge/ge/student/me/course/groups/*/*
 // @match        https://classroom.btu.edu.ge/en/student/me/course/index/*
+// @match        https://classroom.btu.edu.ge/ge/student/me/course/index/*
+// @match        https://classroom.btu.edu.ge/en/student/me/course/index/*/*
 // @match        https://classroom.btu.edu.ge/ge/student/me/course/index/*/*
+// @match        https://timetable.usltd.ge/*
 // @grant        none
 // ==/UserScript==
 
 (function() {
     'use strict';
+
+    // Auto-hide the userscript prompt if visited on the SPA
+    if (location.hostname === 'timetable.usltd.ge') {
+        // Expose a variable and fire an event to immediately notify the React app
+        const s = document.createElement('script');
+        s.textContent = 'window.__BTU_USERSCRIPT_ACTIVE = true; window.dispatchEvent(new CustomEvent("btu-userscript-detected"));';
+        document.head.appendChild(s);
+        s.remove();
+
+        // Inject a quick CSS rule in case React already painted the hint element
+        const style = document.createElement('style');
+        style.textContent = '#userscript-hint { display: none !important; }';
+        document.head.appendChild(style);
+        return; // Halt execution so we don't try to find BTU tables here
+    }
 
     // Wait for the main groups table to load in the DOM
     const initInterval = setInterval(() => {
@@ -60,46 +80,139 @@
         btnContainer.style.display = 'flex';
         btnContainer.style.gap = '10px';
         btnContainer.style.alignItems = 'center';
+        btnContainer.style.flexWrap = 'wrap';
 
         const label = document.createElement('strong');
         label.innerText = 'Export Selected: ';
         btnContainer.appendChild(label);
+
+        // 3. Inject Language Selector
+        const currentLang = location.href.includes('/en/') ? 'en' : (location.href.includes('/ge/') ? 'ge' : 'en');
+        
+        const langSelect = document.createElement('select');
+        langSelect.id = 'btu-export-lang';
+        langSelect.style.padding = '4px 8px';
+        langSelect.style.borderRadius = '4px';
+        langSelect.style.border = '1px solid #ccc';
+        langSelect.innerHTML = `
+            <option value="en" ${currentLang === 'en' ? 'selected' : ''}>English</option>
+            <option value="ge" ${currentLang === 'ge' ? 'selected' : ''}>Georgian</option>
+        `;
+        btnContainer.appendChild(langSelect);
 
         const createBtn = (text, onClick) => {
             const btn = document.createElement('button');
             btn.innerText = text;
             btn.className = 'btn btn-default btn-sm'; // Using existing BTU bootstrap classes
             btn.style.marginLeft = '5px';
-            btn.onclick = (e) => {
+            btn.onclick = async (e) => {
                 e.preventDefault();
-                onClick();
+                btn.disabled = true;
+                const originalText = btn.innerText;
+                btn.innerText = 'Loading...';
+                try {
+                    await onClick();
+                } catch (err) {
+                    console.error("Export failed:", err);
+                    alert("Export failed. See console for details.");
+                } finally {
+                    btn.disabled = false;
+                    btn.innerText = originalText;
+                }
             };
             return btn;
         };
 
-        btnContainer.appendChild(createBtn('Clean HTML', () => download(generateHTML(), 'schedule.html', 'text/html')));
-        btnContainer.appendChild(createBtn('JSON', () => download(generateJSON(), 'schedule.json', 'application/json')));
-        btnContainer.appendChild(createBtn('CSV', () => download(generateCSV(), 'schedule.csv', 'text/csv;charset=utf-8;')));
-        btnContainer.appendChild(createBtn('Markdown', () => download(generateMarkdown(), 'schedule.md', 'text/markdown')));
+        btnContainer.appendChild(createBtn('Clean HTML', () => processExport(generateHTML, 'html', 'text/html')));
+        btnContainer.appendChild(createBtn('JSON', () => processExport(generateJSON, 'json', 'application/json')));
+        btnContainer.appendChild(createBtn('CSV', () => processExport(generateCSV, 'csv', 'text/csv;charset=utf-8;')));
+        btnContainer.appendChild(createBtn('Markdown', () => processExport(generateMarkdown, 'md', 'text/markdown')));
 
         table.parentNode.insertBefore(btnContainer, table);
     }
 
+    // --- Core Export Orchestrator ---
+    async function processExport(generatorFunc, extension, mimeType) {
+        const doc = await getTargetDocument();
+        if (!doc) return; // Halt if redirect was required
+
+        const checkedIds = getCheckedIds();
+        const data = extractData(doc, checkedIds);
+
+        if (data.length === 0) {
+            alert("No groups selected to export.");
+            return;
+        }
+
+        // Generate filename based on course title, falling back to 'schedule'
+        const courseNameRaw = data[0].courseTitle || 'schedule';
+        const courseName = courseNameRaw.replace(/[\/\\?%*:|"<>]/g, '-').trim() || 'schedule';
+        const filename = `${courseName}.${extension}`;
+
+        const content = generatorFunc(data);
+        download(content, filename, mimeType);
+    }
+
+    // --- Document & State Fetching ---
+    async function getTargetDocument() {
+        const targetLang = document.getElementById('btu-export-lang').value;
+        const currentLang = location.href.includes('/en/') ? 'en' : (location.href.includes('/ge/') ? 'ge' : null);
+
+        // If the requested language is the currently active one, just use the current document
+        if (targetLang === currentLang || !currentLang) {
+            return document;
+        }
+
+        const targetUrl = location.href.replace(`/${currentLang}/`, `/${targetLang}/`);
+        try {
+            const response = await fetch(targetUrl);
+            const html = await response.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+
+            // Ensure the main table exists in the fetched HTML (if site loads dynamically)
+            if (!doc.getElementById('groups')) {
+                console.warn("Table not found in background HTML. Page likely rendered dynamically.");
+                const confirmNav = confirm("The selected language needs to be loaded directly. Redirect now?");
+                if (confirmNav) {
+                    window.location.href = targetUrl;
+                }
+                return null;
+            }
+            return doc;
+        } catch (e) {
+            console.error("Fetch failed", e);
+            alert("Failed to fetch the alternative language. Will use the current page instead.");
+            return document; // Fallback to current
+        }
+    }
+
+    function getCheckedIds() {
+        const checked = [];
+        document.querySelectorAll('.btu-export-cb:checked').forEach(cb => {
+            const titleEl = cb.closest('tr').querySelector('.group_title');
+            if (titleEl) {
+                checked.push(titleEl.getAttribute('data-id'));
+            }
+        });
+        return checked;
+    }
+
     // --- Data Extraction Logic ---
-    function extractData() {
+    function extractData(doc, checkedIds) {
         const data = [];
-        const groupTitles = document.querySelectorAll('.group_title');
-        const courseTitle = document.querySelector('legend') ? document.querySelector('legend').textContent.trim() : 'Unknown Course';
+        const groupTitles = doc.querySelectorAll('.group_title');
+        const legendEl = doc.querySelector('legend');
+        const courseTitle = legendEl ? legendEl.textContent.trim() : 'Unknown Course';
 
         groupTitles.forEach(titleEl => {
-            const mainRow = titleEl.closest('tr');
-            const checkbox = mainRow.querySelector('.btu-export-cb');
+            const dataId = titleEl.getAttribute('data-id');
 
             // Skip if user unchecked the partial export checkbox
-            if (checkbox && !checkbox.checked) return;
+            if (!checkedIds.includes(dataId)) return;
 
+            const mainRow = titleEl.closest('tr');
             const groupName = titleEl.textContent.trim();
-            const dataId = titleEl.getAttribute('data-id');
 
             // Extract Instructor (Text node after the user icon)
             let instructor = "";
@@ -110,7 +223,7 @@
 
             // Extract Schedule from the nested hidden row
             const schedules = [];
-            const schedRow = document.getElementById('tr-' + dataId);
+            const schedRow = doc.getElementById('tr-' + dataId);
             if (schedRow) {
                 const schedRows = schedRow.querySelectorAll('table tbody tr');
                 schedRows.forEach(sr => {
@@ -133,12 +246,11 @@
 
     // --- Format Generators ---
 
-    function generateJSON() {
-        return JSON.stringify(extractData(), null, 2);
+    function generateJSON(data) {
+        return JSON.stringify(data, null, 2);
     }
 
-    function generateHTML() {
-        const data = extractData();
+    function generateHTML(data) {
         let html = '<table border="1" style="border-collapse: collapse;">\n';
         if (data.length > 0) {
             html += `  <caption><strong>${data[0].courseTitle}</strong></caption>\n`;
@@ -165,8 +277,7 @@
         return html; // Pure table component, no html/body/doctype
     }
 
-    function generateCSV() {
-        const data = extractData();
+    function generateCSV(data) {
         let csv = '\uFEFF'; // UTF-8 BOM so Excel reads Georgian characters correctly
         csv += '"Course","Group","Instructor","Day","Time","Room"\n';
 
@@ -182,8 +293,7 @@
         return csv;
     }
 
-    function generateMarkdown() {
-        const data = extractData();
+    function generateMarkdown(data) {
         let md = '';
         if (data.length > 0) {
             md += `**Course:** ${data[0].courseTitle}\n\n`;
