@@ -12,7 +12,7 @@ const scripts = [];
 const files = fs.readdirSync(__dirname).filter(f => f.endsWith('.user.js'));
 
 // Get the repo name from GitHub Actions, or fallback to a placeholder
-const repoName = process.env.GITHUB_REPOSITORY || 'USERNAME/REPO';
+const repoName = process.env.GITHUB_REPOSITORY || 'USLTD/userscripts';
 
 for (const file of files) {
   const content = fs.readFileSync(file, 'utf8');
