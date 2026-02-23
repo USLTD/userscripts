@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         BTU Classroom Table Exporter
-// @namespace    https://usltd.ge/
-// @version      1.1
+// @namespace    https://timetable.usltd.ge/
+// @version      1.2
 // @description  Export course groups from BTU Classroom to JSON, HTML Table, CSV, and Markdown. Supports partial export.
 // @author       Luka Mamukashvili <mamukashvili.luka@usltd.ge>
 // @match        https://classroom.btu.edu.ge/en/student/me/course/groups/*
 // @match        https://classroom.btu.edu.ge/ge/student/me/course/groups/*/*
+// @match        https://classroom.btu.edu.ge/en/student/me/course/index/*
+// @match        https://classroom.btu.edu.ge/ge/student/me/course/index/*/*
 // @grant        none
 // ==/UserScript==
 
